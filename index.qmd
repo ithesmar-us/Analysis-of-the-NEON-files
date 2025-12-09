@@ -1,0 +1,14 @@
+---
+title: "index"
+author: "Iris Thesmar"
+format:
+  html:
+    toc: true
+    toc_float: true
+    embed-resources: true
+execute: 
+  warning: false
+  message: false
+---
+
+Link to [NEON MAGs soil data analysis](https://ood.unity.rc.umass.edu/rnode/gpu051.unity.rc.umass.edu/10738/files/Lab%2013/13.2.html)
