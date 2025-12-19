@@ -1,5 +1,5 @@
 ---
-title: "index"
+title: "x"
 author: "Iris Thesmar"
 format:
   html:
@@ -11,9 +11,15 @@ execute:
   message: false
 ---
 
-Link to [NEON MAGs soil data analysis](https://ood.unity.rc.umass.edu/rnode/gpu049.unity.rc.umass.edu/6668/files/Lab%2013/Analysis-of-the-NEON-files/Lab%2013.html)
-
 ```{r}
 library(usethis)
+use_git_config(user.name = "Iris Thesmar", user.email = "ithesmar@umass.edu")
+```
+
+```{r}
 usethis::create_github_token()
+```
+
+```{r}
+gitcreds::gitcreds_set()
 ```
