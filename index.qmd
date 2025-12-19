@@ -11,4 +11,4 @@ execute:
   message: false
 ---
 
-Link to [NEON MAGs soil data analysis](https://ood.unity.rc.umass.edu/rnode/gpu051.unity.rc.umass.edu/10738/files/Lab%2013/13.2.html)
+Link to [NEON MAGs soil data analysis](https://ood.unity.rc.umass.edu/rnode/gpu049.unity.rc.umass.edu/6668/files/Lab%2013/Analysis-of-the-NEON-files/Lab%2013.html)
