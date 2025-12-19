@@ -1,0 +1,340 @@
+---
+title: "Lab 13"
+author: "Iris Thesmar"
+format:
+  html:
+    toc: true
+    toc_float: true
+    embed-resources: true
+execute: 
+  warning: false
+  message: false
+---
+
+```{r}
+library(tidyverse) 
+library(lubridate)
+library(DT)
+library(viridis)
+library(janitor)
+library(plotly)
+library(respirometry)
+```
+
+```{r}
+NEON_soilMAGs_soilChem <- read.csv("NEON_soilMAGs_soilChem.csv")
+```
+
+```{r}
+#install.packages("vegan")
+
+#install.packages("corrplot")
+
+# Load the package
+library(corrplot)
+library(vegan)   # for ecological analyses
+library(sf)      # for spatial data
+library(ggplot2)
+```
+
+```{r}
+# Replace with your actual file path
+soil_data <- read_csv("NEON_soilMAGs_soilChem.csv")
+
+colnames(soil_data)
+```
+
+# Environmental correlations
+
+Environmental correlations of the different type of micro organisms found in the soil. The goal is too see whether the organisms are more or less associated with a certain soil moisture, or soil temperature.
+
+```{r}
+# Environmental variables
+env_vars <- soil_data %>%
+  select(soilMoisture.x, soilMoisture.y, soilTemp,
+         soilInWaterpH, soilInCaClpH,
+         decimalLatitude, decimalLongitude, elevation)
+
+# Genomic metadata (MAG features)
+mag_vars <- soil_data %>%
+  select(bin_completeness, bin_contamination,
+         average_coverage, gene_count, scaffold_count)
+
+```
+
+## Correlation test on Ph and communities
+
+We want to see the the relationship between the multiple variables through a heat map.
+
+```{r}
+#| fig-height: 6
+#| fig-width: 15
+library(fastDummies)              # run every session
+
+mag_vars <- soil_data %>%
+  select(soilInWaterpH, soilInCaClpH, phylum,
+        community, bin_contamination)
+
+# Dummy-encode phylum + community
+mag_numeric <- dummy_cols(mag_vars, 
+                          select_columns = c("phylum", "community"),
+                          remove_first_dummy = TRUE,   # avoids collinearity
+                          remove_selected_columns = TRUE)
+
+clean_data <- na.omit(soil_data)
+
+cor_matrix <- cor(mag_numeric, use = "pairwise.complete.obs")
+# Heatmap option
+heatmap(cor_matrix, scale = "none")
+```
+
+Rather inconclusive, as one can admire.
+
+```{r}
+#| fig-height: 8
+#| fig-width: 10
+# Now rerun your correlation plot
+corrplot(cor_matrix, method = "color", tl.cex = 0.9, cl.cex = 0.9)
+```
+
+## Ordination analysis to observe the correlation between features and environmental variables
+
+```{r}
+combined <- bind_cols(mag_vars, env_vars) %>%
+  filter(if_all(everything(), ~ !is.na(.) & is.finite(.)))
+
+mag_clean <- combined %>% select(bin_completeness, bin_contamination,
+                                 gene_count, scaffold_count)
+env_clean <- combined %>% select(soilMoisture.x, soilMoisture.y, soilTemp,
+                                 soilInWaterpH, soilInCaClpH,
+                                 decimalLatitude, decimalLongitude, elevation)
+
+rda_model <- rda(mag_clean ~ ., data = env_clean)
+```
+
+```{r}
+#| fig-height: 6
+#| fig-width: 10
+
+# Base RDA plot with arrows
+plot(rda_model, main = "RDA: MAG features vs Environmental Variables")
+
+
+```
+
+```{r}
+library(ggrepel)              # every session
+# --- Extract scores ---
+sp  <- scores(rda_model, display = "species", scaling = 2)  # species/MAG features
+st  <- scores(rda_model, display = "sites",   scaling = 2)  # samples
+bp  <- scores(rda_model, display = "bp",      scaling = 2)  # environmental arrows
+
+sp_df <- as.data.frame(sp)
+sp_df$label <- rownames(sp_df)
+
+st_df <- as.data.frame(st)
+st_df$label <- rownames(st_df)
+
+bp_df <- as.data.frame(bp)
+bp_df$label <- rownames(bp_df)
+
+# --- Variance explained percentages ---
+var <- summary(rda_model)$cont$importance[2,1:2] * 100
+
+# --- Build ggplot ---
+ggplot() +
+  
+  # site points
+  geom_point(data = st_df,
+             aes(x = RDA1, y = RDA2),
+             color = "black", alpha = 0.7, size = 2) +
+  
+  # species points
+  geom_point(data = sp_df,
+             aes(x = RDA1, y = RDA2),
+             color = "red", size = 2) +
+  
+  # species labels (non-overlapping)
+  geom_text_repel(data = sp_df,
+                  aes(x = RDA1, y = RDA2, label = label),
+                  color = "red", size = 3, max.overlaps = Inf) +
+  
+  # environmental arrows
+  geom_segment(data = bp_df,
+               aes(x = 0, y = 0, xend = RDA1, yend = RDA2),
+               arrow = arrow(length = unit(0.25,"cm")),
+               color = "blue", linewidth = 0.7) +
+  
+  # environmental labels (non-overlapping)
+  geom_text_repel(data = bp_df,
+                  aes(x = RDA1, y = RDA2, label = label),
+                  color = "blue", size = 3, max.overlaps = Inf) +
+  
+  # axis labels using explained variance
+  xlab(paste0("RDA1 (", round(var[1], 1), "%)")) +
+  ylab(paste0("RDA2 (", round(var[2], 1), "%)")) +
+  
+  theme_classic() +
+  ggtitle("RDA: MAG features vs Environmental Variables")
+
+```
+
+# Geographical analysis
+
+```{r}
+taxonomy_split <- soil_data %>%
+  separate(phylum, into = c("Domain","Phylum","Class","Order","Family","Genus"),
+           sep = ";", fill = "right", remove = FALSE)
+```
+
+```{r}
+comm_matrix <- taxonomy_split %>%
+  group_by(site, phylum) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  pivot_wider(names_from = phylum, values_from = n, values_fill = 0)
+```
+
+```{r}
+comm_matrix <- comm_matrix %>% filter(!is.na(site))
+comm_matrix$site <- make.unique(comm_matrix$site)
+
+
+site_taxa <- comm_matrix %>% column_to_rownames("site")
+site_taxa <- comm_matrix %>% column_to_rownames("site")
+```
+
+```{r}
+site_taxa <- site_taxa %>% mutate(across(everything(), as.numeric))
+site_taxa <- as.data.frame(site_taxa)
+site_taxa[is.na(site_taxa)] <- 0
+```
+
+```{r}
+#| fig-height: 10
+#| fig-width: 15
+
+#install.packages("ggrepel")
+library(ggrepel)
+
+nmds <- metaMDS(site_taxa, distance = "bray", k = 2, trymax = 100)
+
+site_scores <- as.data.frame(scores(nmds, display = "sites"))
+site_scores$SiteID <- rownames(site_scores)
+
+taxa_scores <- as.data.frame(scores(nmds, display = "species"))
+taxa_scores$Taxon <- rownames(taxa_scores)
+
+ggplot() +
+  geom_point(data = site_scores, aes(x = NMDS1, y = NMDS2), color = "black") +
+  geom_text_repel(data = site_scores, aes(x = NMDS1, y = NMDS2, label = SiteID), color = "black") +
+  geom_text_repel(data = taxa_scores, aes(x = NMDS1, y = NMDS2, label = Taxon), color = "red") +
+  labs(title = "NMDS of Microbial Communities", x = "NMDS1", y = "NMDS2") +
+  theme_minimal()
+```
+
+```{r}
+# Community matrix
+comm_matrix <- taxonomy_split %>%
+  filter(!is.na(siteID), !is.na(phylum)) %>%
+  group_by(siteID, phylum) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  pivot_wider(names_from = phylum, values_from = n, values_fill = 0)
+
+site_taxa <- comm_matrix %>%
+  column_to_rownames("siteID") %>%
+  as.data.frame()
+
+# Collapse coords to unique sites
+coords <- soil_data %>%
+  distinct(siteID, decimalLatitude, decimalLongitude)
+
+# Keep only sites present in site_taxa
+common_sites <- intersect(rownames(site_taxa), coords$siteID)
+
+coords <- coords %>%
+  filter(siteID %in% common_sites)
+
+# Reorder coords to match site_taxa
+coords <- coords[match(common_sites, coords$siteID), ]
+
+# Check alignment
+all(coords$siteID == rownames(site_taxa))  # should return TRUE
+
+comm_dist <- vegdist(site_taxa, method = "bray")
+geo_dist  <- dist(coords %>% select(decimalLatitude, decimalLongitude))
+
+mantel_result <- mantel(comm_dist, geo_dist)
+print(mantel_result)
+```
+
+```{r}
+# Convert distance objects to matrices
+comm_mat <- as.matrix(comm_dist)
+geo_mat  <- as.matrix(geo_dist)
+
+# Extract lower triangle (unique site pairs only)
+comm_vec <- comm_mat[lower.tri(comm_mat)]
+geo_vec  <- geo_mat[lower.tri(geo_mat)]
+
+# Build tidy data frame
+df_decay <- data.frame(
+  GeographicDistance = geo_vec,
+  CommunitySimilarity = 1 - comm_vec
+)
+
+# Plot with ggplot2
+ggplot(df_decay, aes(x = GeographicDistance, y = CommunitySimilarity)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  labs(
+    title = "Distance–Decay Relationship",
+    x = "Geographic Distance",
+    y = "Community Similarity (1 - Bray-Curtis)"
+  ) +
+  theme_minimal()
+```
+
+# Taxonomy analysis
+
+```{r}
+#| fig-height: 6
+#| fig-width: 8
+taxonomy_split <- soil_data %>%
+  separate(gtdb_taxonomy_lineage, into = c("Domain","Phylum","Class","Order","Family","Genus"),
+           sep = ";", fill = "right", remove = FALSE)
+
+# --- Summarize composition at Phylum level ---
+phylum_counts <- taxonomy_split %>%
+  count(phylum, sort = TRUE) %>%
+  mutate(RelativeAbundance = n / sum(n) * 100)
+
+# --- Plot relative abundance ---
+ggplot(phylum_counts, aes(x = reorder(phylum, -RelativeAbundance),
+                          y = RelativeAbundance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Taxonomic Composition at Phylum Level",
+       x = "Phylum",
+       y = "Relative Abundance (%)") +
+  theme_minimal()
+```
+
+```{r}
+#| fig-height: 10
+#| fig-width: 15
+# --- Compare across locations (example) ---
+# Replace 'Location' with the actual column name in your dataset
+phylum_by_location <- taxonomy_split %>%
+  group_by(site, Phylum) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(site) %>%
+  mutate(RelativeAbundance = n / sum(n) * 100)
+
+ggplot(phylum_by_location, aes(x = site, y = RelativeAbundance, fill = Phylum)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Phylum Composition by Location",
+       x = "Location",
+       y = "Relative Abundance (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
